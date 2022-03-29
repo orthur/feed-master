@@ -109,7 +109,8 @@ func (s *Service) RSSFeed(fi FeedInfo) (string, error) {
 
 		var fileSize int
 		if fileInfo, fiErr := os.Stat(entry.File); fiErr != nil {
-			log.Printf("[WARN] failed to get file size for %s: %v", entry.File, fiErr)
+			log.Printf("[WARN] failed to get file size for %s (%s %s): %v",
+				entry.File, entry.VideoID, entry.Title, fiErr)
 		} else {
 			fileSize = int(fileInfo.Size())
 		}
@@ -154,6 +155,9 @@ func (s *Service) RSSFeed(fi FeedInfo) (string, error) {
 }
 
 func (s *Service) procChannels(ctx context.Context) error {
+
+	var allStats stats
+
 	for _, feedInfo := range s.Feeds {
 		entries, err := s.ChannelService.Get(ctx, feedInfo.ID, feedInfo.Type)
 		if err != nil {
@@ -163,6 +167,7 @@ func (s *Service) procChannels(ctx context.Context) error {
 		log.Printf("[INFO] got %d entries for %s, limit to %d", len(entries), feedInfo.Name, s.keep(feedInfo))
 		changed, processed := false, 0
 		for i, entry := range entries {
+			allStats.entries++
 			if processed >= s.keep(feedInfo) {
 				break
 			}
@@ -173,6 +178,7 @@ func (s *Service) procChannels(ctx context.Context) error {
 				return errors.Wrapf(exErr, "failed to check if entry %s exists", entry.VideoID)
 			}
 			if exists {
+				allStats.skipped++
 				processed++
 				continue
 			}
@@ -184,6 +190,7 @@ func (s *Service) procChannels(ctx context.Context) error {
 				log.Printf("[WARN] can't get processed status for %s, %+v", entry.VideoID, feedInfo)
 			}
 			if procErr == nil && found {
+				allStats.dups++
 				processed++
 				log.Printf("[INFO] skipping already processed entry %s at %s, %+v",
 					entry.VideoID, procTS.Format(time.RFC3339), feedInfo)
@@ -193,13 +200,14 @@ func (s *Service) procChannels(ctx context.Context) error {
 			log.Printf("[INFO] new entry [%d] %s, %s, %s", i+1, entry.VideoID, entry.Title, feedInfo.Name)
 			file, downErr := s.Downloader.Get(ctx, entry.VideoID, s.makeFileName(entry))
 			if downErr != nil {
+				allStats.ignored++
 				log.Printf("[WARN] failed to download %s: %s", entry.VideoID, downErr)
 				continue
 			}
 			processed++
 			log.Printf("[INFO] downloaded %s (%s) to %s, channel: %+v", entry.VideoID, entry.Title, file, feedInfo)
 			entry.File = file
-			if !strings.HasPrefix(entry.Title, feedInfo.Name) {
+			if !strings.Contains(entry.Title, feedInfo.Name) { // if title doesn't contains channel name add it
 				entry.Title = feedInfo.Name + ": " + entry.Title
 			}
 			ok, saveErr := s.Store.Save(entry)
@@ -213,13 +221,15 @@ func (s *Service) procChannels(ctx context.Context) error {
 			if procErr = s.Store.SetProcessed(entry); procErr != nil {
 				log.Printf("[WARN] failed to set processed status for %s: %v", entry.VideoID, procErr)
 			}
+			allStats.added++
 			log.Printf("[INFO] saved %s (%s) to %s, channel: %+v", entry.VideoID, entry.Title, file, feedInfo)
 		}
+		allStats.processed += processed
 
 		if changed { // save rss feed to fs if there are new entries
-			if err := s.removeOld(feedInfo); err != nil {
-				log.Printf("[WARN] failed to remove old entries for %s: %v", feedInfo.Name, err)
-			}
+			removed := s.removeOld(feedInfo)
+			allStats.removed += removed
+
 			rss, rssErr := s.RSSFeed(feedInfo)
 			if rssErr != nil {
 				log.Printf("[WARN] failed to generate rss for %s: %s", feedInfo.Name, rssErr)
@@ -231,26 +241,29 @@ func (s *Service) procChannels(ctx context.Context) error {
 		}
 	}
 
-	log.Printf("[INFO] processed channels completed, total channels: %d", len(s.Feeds))
+	log.Printf("[INFO] all channels processed - channels: %d, %s", len(s.Feeds), allStats.String())
+
 	return nil
 }
 
 // removeOld deletes old entries from store and corresponding files
-func (s *Service) removeOld(fi FeedInfo) error {
+func (s *Service) removeOld(fi FeedInfo) int {
+	removed := 0
 	keep := s.keep(fi)
 	files, err := s.Store.RemoveOld(fi.ID, keep+1)
-	if err != nil {
-		return errors.Wrapf(err, "failed to remove old meta data for %s", fi.ID)
+	if err != nil { // even with error we get a list of files to remove
+		log.Printf("[WARN] failed to remove some old meta data for %s, %v", fi.ID, err)
 	}
+
 	for _, f := range files {
 		if e := os.Remove(f); e != nil {
-			log.Printf("[WARN] failed to remove file %s: %s", f, e)
+			log.Printf("[WARN] failed to remove file %s: %v", f, e)
 			continue
 		}
-
+		removed++
 		log.Printf("[INFO] removed %s for %s (%s)", f, fi.ID, fi.Name)
 	}
-	return nil
+	return removed
 }
 
 func (s *Service) keep(fi FeedInfo) int {
@@ -267,4 +280,19 @@ func (s *Service) makeFileName(entry ytfeed.Entry) string {
 		return uuid.New().String()
 	}
 	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+type stats struct {
+	entries   int
+	processed int
+	added     int
+	removed   int
+	ignored   int
+	skipped   int
+	dups      int
+}
+
+func (st stats) String() string {
+	return fmt.Sprintf("entries: %d, processed: %d, updated: %d, removed: %d, ignored: %d, skipped: %d, dups: %d",
+		st.entries, st.processed, st.added, st.removed, st.ignored, st.skipped, st.dups)
 }
