@@ -21,6 +21,7 @@ import (
 // Rss2 feed
 type Rss2 struct {
 	XMLName       xml.Name `xml:"rss"`
+	Xmlns         string   `xml:"xmlns:itunes,attr"`
 	Version       string   `xml:"version,attr"`
 	Title         string   `xml:"channel>title"`
 	Language      string   `xml:"channel>language"`
@@ -28,8 +29,14 @@ type Rss2 struct {
 	Description   string   `xml:"channel>description"`
 	PubDate       string   `xml:"channel>pubDate"`
 	LastBuildDate string   `xml:"channel>lastBuildDate"`
+	Image         Img      `xml:"channel>itunes:image"`
 
 	ItemList []Item `xml:"channel>item"`
+}
+
+// Img image element
+type Img struct {
+	Url string `xml:"href,attr"`
 }
 
 // Enclosure element from item
