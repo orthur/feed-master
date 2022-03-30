@@ -8,8 +8,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/umputun/feed-master/app/youtube/feed"
 	bolt "go.etcd.io/bbolt"
+
+	"github.com/umputun/feed-master/app/youtube/feed"
 )
 
 func TestStore_SaveAndLoad(t *testing.T) {
@@ -60,42 +61,6 @@ func TestStore_SaveAndLoad(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(res))
 	assert.Equal(t, "vid2", res[0].VideoID)
-}
-
-func TestStore_Channels(t *testing.T) {
-	tmpfile := filepath.Join(os.TempDir(), "test.db")
-	defer os.Remove(tmpfile)
-
-	db, err := bolt.Open(tmpfile, 0o600, &bolt.Options{Timeout: 1 * time.Second})
-	require.NoError(t, err)
-
-	s := BoltDB{DB: db}
-	{
-		entry := feed.Entry{
-			ChannelID: "chan1",
-			VideoID:   "vid1",
-			Title:     "title1",
-			Published: time.Date(2022, time.March, 21, 16, 45, 22, 0, time.UTC),
-		}
-		created, e := s.Save(entry)
-		require.NoError(t, e)
-		assert.True(t, created)
-	}
-	{
-		entry := feed.Entry{
-			ChannelID: "chan2",
-			VideoID:   "vid2",
-			Title:     "title2",
-			Published: time.Date(2022, time.March, 21, 16, 45, 22, 0, time.UTC),
-		}
-		created, e := s.Save(entry)
-		require.NoError(t, e)
-		assert.True(t, created)
-	}
-
-	res, err := s.Channels()
-	require.NoError(t, err)
-	assert.Equal(t, []string{"chan1", "chan2"}, res)
 }
 
 func TestStore_Exist(t *testing.T) {
@@ -221,6 +186,9 @@ func TestBoltDB_SetProcessed(t *testing.T) {
 		require.NoError(t, e)
 	}
 
+	count := s.CountProcessed()
+	assert.Equal(t, 3, count)
+
 	found, ts, err := s.CheckProcessed(feed.Entry{ChannelID: "chan1", VideoID: "vid2"})
 	require.NoError(t, err)
 	assert.True(t, found)
@@ -234,4 +202,57 @@ func TestBoltDB_SetProcessed(t *testing.T) {
 	found, _, err = s.CheckProcessed(feed.Entry{ChannelID: "chan1", VideoID: "vidXXX"})
 	require.NoError(t, err)
 	assert.False(t, found)
+}
+
+func TestBoltDB_Last(t *testing.T) {
+	tmpfile := filepath.Join(os.TempDir(), "test.db")
+	defer os.Remove(tmpfile)
+
+	db, err := bolt.Open(tmpfile, 0o600, &bolt.Options{Timeout: 1 * time.Second})
+	require.NoError(t, err)
+
+	s := BoltDB{DB: db, Channels: []string{"chan1", "chan2"}}
+	_, err = s.Last()
+	assert.EqualError(t, err, "can't load last entry for chan1: no bucket for chan1")
+
+	{
+		entry := feed.Entry{
+			ChannelID: "chan1",
+			VideoID:   "vid1",
+			Title:     "title1",
+			Published: time.Date(2022, time.March, 21, 16, 45, 22, 0, time.UTC),
+			File:      "f1",
+		}
+		created, e := s.Save(entry)
+		require.NoError(t, e)
+		assert.True(t, created)
+	}
+	{
+		entry := feed.Entry{
+			ChannelID: "chan1",
+			VideoID:   "vid2",
+			Title:     "title2",
+			Published: time.Date(2022, time.March, 21, 17, 45, 22, 0, time.UTC),
+			File:      "f2",
+		}
+		created, e := s.Save(entry)
+		require.NoError(t, e)
+		assert.True(t, created)
+	}
+	{
+		entry := feed.Entry{
+			ChannelID: "chan2",
+			VideoID:   "vid3",
+			Title:     "title3",
+			Published: time.Date(2022, time.March, 21, 17, 46, 22, 0, time.UTC),
+			File:      "f3",
+		}
+		created, e := s.Save(entry)
+		require.NoError(t, e)
+		assert.True(t, created)
+	}
+
+	res, err := s.Last()
+	require.NoError(t, err)
+	assert.Equal(t, "vid3", res.VideoID)
 }

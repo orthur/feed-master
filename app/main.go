@@ -93,11 +93,18 @@ func main() {
 		dwnl := ytfeed.NewDownloader(conf.YouTube.DlTemplate, outWr, errWr, opts.YtLocation)
 		fd := ytfeed.Feed{Client: &http.Client{Timeout: 10 * time.Second},
 			ChannelBaseURL: conf.YouTube.BaseChanURL, PlaylistBaseURL: conf.YouTube.BasePlaylistURL}
+
+		channels := []string{}
+		for _, c := range conf.YouTube.Channels {
+			channels = append(channels, c.ID)
+		}
+		log.Printf("[DEBUG] buckets for youtube store: %s", strings.Join(channels, ", "))
+
 		ytSvc = youtube.Service{
 			Feeds:          conf.YouTube.Channels,
 			Downloader:     dwnl,
 			ChannelService: &fd,
-			Store:          &store.BoltDB{DB: db},
+			Store:          &store.BoltDB{DB: db, Channels: channels},
 			CheckDuration:  conf.YouTube.UpdateInterval,
 			KeepPerChannel: conf.YouTube.MaxItems,
 			RootURL:        conf.YouTube.BaseURL,

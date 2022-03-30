@@ -5,13 +5,15 @@ import (
 	"crypto/sha1"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	log "github.com/go-pkgz/lgr"
 	"github.com/hashicorp/go-multierror"
 	"github.com/pkg/errors"
-	"github.com/umputun/feed-master/app/youtube/feed"
 	bolt "go.etcd.io/bbolt"
+
+	"github.com/umputun/feed-master/app/youtube/feed"
 )
 
 var processedBkt = []byte("processed")
@@ -19,6 +21,7 @@ var processedBkt = []byte("processed")
 // BoltDB store for metadata related to downloaded YouTube audio.
 type BoltDB struct {
 	*bolt.DB
+	Channels []string // the list of configured channels ids
 }
 
 // Save to bolt, skip if found
@@ -97,7 +100,7 @@ func (s *BoltDB) Load(channelID string, max int) ([]feed.Entry, error) {
 		for k, v := c.Last(); k != nil; k, v = c.Prev() {
 			var item feed.Entry
 			if err := json.Unmarshal(v, &item); err != nil {
-				log.Printf("[WARN] failed to unmarshal, %v", err)
+				log.Printf("[WARN] failed to unmarshal %s, %q: %v", channelID, string(v), err)
 				continue
 			}
 			if len(result) >= max {
@@ -110,15 +113,25 @@ func (s *BoltDB) Load(channelID string, max int) ([]feed.Entry, error) {
 	return result, err
 }
 
-// Channels returns list of channels (buckets)
-func (s *BoltDB) Channels() (result []string, err error) {
-	err = s.View(func(tx *bolt.Tx) error {
-		return tx.ForEach(func(name []byte, _ *bolt.Bucket) error { // nolint
-			result = append(result, string(name))
-			return nil
-		})
+// Last returns last entry across all channels
+func (s *BoltDB) Last() (feed.Entry, error) {
+	entries := []feed.Entry{}
+	for _, channel := range s.Channels {
+		last, err := s.Load(channel, 1)
+		if err != nil {
+			return feed.Entry{}, errors.Wrapf(err, "can't load last entry for %s", channel)
+		}
+		if len(last) > 0 {
+			entries = append(entries, last[0])
+		}
+	}
+	if len(entries) == 0 {
+		return feed.Entry{}, errors.New("no entries")
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Published.After(entries[j].Published)
 	})
-	return result, err
+	return entries[0], nil
 }
 
 // RemoveOld removes old entries from bolt and returns the list of removed entry.File
@@ -215,6 +228,21 @@ func (s *BoltDB) CheckProcessed(entry feed.Entry) (found bool, ts time.Time, err
 	})
 
 	return found, ts, err
+}
+
+// CountProcessed returns the number of processed entries stored in processedBkt
+func (s *BoltDB) CountProcessed() (count int) {
+
+	_ = s.DB.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket(processedBkt)
+		if bucket == nil {
+			return nil
+		}
+
+		count = bucket.Stats().KeyN
+		return nil
+	})
+	return count
 }
 
 func (s *BoltDB) key(entry feed.Entry) ([]byte, error) {
