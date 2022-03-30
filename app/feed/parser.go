@@ -20,23 +20,30 @@ import (
 
 // Rss2 feed
 type Rss2 struct {
-	XMLName       xml.Name `xml:"rss"`
-	Xmlns         string   `xml:"xmlns:itunes,attr"`
-	Version       string   `xml:"version,attr"`
-	Title         string   `xml:"channel>title"`
-	Language      string   `xml:"channel>language"`
-	Link          string   `xml:"channel>link"`
-	Description   string   `xml:"channel>description"`
-	PubDate       string   `xml:"channel>pubDate"`
-	LastBuildDate string   `xml:"channel>lastBuildDate"`
-	Image         Img      `xml:"channel>itunes:image"`
+	XMLName        xml.Name       `xml:"rss"`
+	NsItunes       string         `xml:"xmlns:itunes,attr"`
+	NsMedia        string         `xml:"xmlns:media,attr"`
+	Version        string         `xml:"version,attr"`
+	Title          string         `xml:"channel>title"`
+	Language       string         `xml:"channel>language"`
+	Link           string         `xml:"channel>link"`
+	Description    string         `xml:"channel>description"`
+	PubDate        string         `xml:"channel>pubDate"`
+	LastBuildDate  string         `xml:"channel>lastBuildDate"`
+	ItunesImage    ItunesImg      `xml:"channel>itunes:image"`
+	MediaThumbnail MediaThumbnail `xml:"channel>media:thumbnail"`
 
 	ItemList []Item `xml:"channel>item"`
 }
 
-// Img image element
-type Img struct {
-	Url string `xml:"href,attr"`
+// ItunesImg image element for iTunes
+type ItunesImg struct {
+	URL string `xml:"href,attr"`
+}
+
+// MediaThumbnail image element for media
+type MediaThumbnail struct {
+	URL string `xml:"url,attr"`
 }
 
 // Enclosure element from item
